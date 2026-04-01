@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>寶可夢大師冒險手帳</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 載入 Babel 以便在瀏覽器中編譯 JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Firebase 設定 (請在這裡填入你的設定) -->
+  <script>
+    // 加入判斷，避免覆蓋掉預覽環境自動提供的設定
+    if (typeof window.__firebase_config === 'undefined') {
+      window.__firebase_config = JSON.stringify({
+        apiKey: "AIzaSyBuAASovfUiULcZSAxLYoTxFcx4bhZC0QY",
+        authDomain: "pokemon-log-7fd7b.firebaseapp.com",
+        projectId: "pokemon-log-7fd7b",
+        storageBucket: "pokemon-log-7fd7b.firebasestorage.app",
+        messagingSenderId: "569646310309",
+        appId: "1:569646310309:web:ef63bc9656304bf137fe4c"
+      });
+    }
+    if (typeof window.__app_id === 'undefined') {
+      window.__app_id = "pokemon-log-vercel-app"; 
+    }
+  </script>
+
+  <!-- 使用原生 ES 模組載入所有 React 與 Firebase 模組 -->
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo } from 'https://esm.sh/react@18.2.0';
+    import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+    import { Calendar, BookOpen, Plus, ChevronLeft, ChevronRight, Save, Trash2, Cloud, Flame, Zap, Shield } from 'https://esm.sh/lucide-react@0.300.0';
+    
+    // 將 Firebase 模組替換為官方 gstatic 來源
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
+    import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+    // --- 這裡放入最新的所有邏輯 ---
+    let app, auth, db;
+    let isFirebaseInitialized = false;
+
+    const initFirebase = (configStr) => {
+      if (isFirebaseInitialized) return true;
+      try {
+        const firebaseConfig = JSON.parse(configStr);
+        // 若還是假字串，則拒絕初始化，交由 UI 處理
+        if (firebaseConfig.apiKey === "請換成你的_API_KEY") return false;
+
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+        isFirebaseInitialized = true;
+        return true;
+      } catch (error) {
+        console.error("Firebase 初始化失敗:", error);
+        return false;
+      }
+    };
+
+    let initialConfig = null;
+    // 優先使用系統提供的設定（如果不是假字串的話）
+    if (typeof window.__firebase_config !== 'undefined' && !window.__firebase_config.includes("請換成你的_API_KEY")) {
+      initialConfig = window.__firebase_config;
+    } else {
+      initialConfig = localStorage.getItem('pokemon_firebase_config');
+    }
+
+    if (initialConfig) initFirebase(initialConfig);
+
+    const TAIWAN_HOLIDAYS_MAP = {
+      '2026-01-01': '元旦', '2026-02-16': '春節', '2026-02-17': '春節', '2026-02-18': '春節', '2026-02-19': '春節', '2026-02-20': '春節',
+      '2026-02-27': '228補假', '2026-02-28': '和平紀念', '2026-04-03': '兒童節', '2026-04-04': '清明節', '2026-04-06': '清明補假',
+      '2026-05-01': '勞動節', '2026-06-19': '端午節', '2026-09-25': '中秋節', '2026-10-09': '國慶補假', '2026-10-10': '國慶日'
+    };
+
+    const LUNAR_FIRST = ['2026-01-19', '2026-02-17', '2026-03-19', '2026-04-17', '2026-05-17', '2026-06-15', '2026-07-14', '2026-08-13', '2026-09-11', '2026-10-10', '2026-11-09', '2026-12-08'];
+    const LUNAR_FIFTEENTH = ['2026-01-04', '2026-02-02', '2026-03-03', '2026-04-02', '2026-05-01', '2026-05-31', '2026-06-29', '2026-07-28', '2026-08-27', '2026-09-25', '2026-10-24', '2026-11-23', '2026-12-22'];
+
+    const MONTHLY_POKEMON = [
+      "https://assets.pokemon.com/assets/cms2/img/pokedex/full/144.png", "https://assets.pokemon.com/assets/cms2/img/pokedex/full/025.png", 
+      "https://assets.pokemon.com/assets/cms2/img/pokedex/full/001.png", "https://assets.pokemon.com/assets/cms2/img/pokedex/full/175.png", 
+      "https://assets.pokemon.com/assets/cms2/img/pokedex/full/251.png", "https://assets.pokemon.com/assets/cms2/img/pokedex/full/007.png", 
+      "https://assets.pokemon.com/assets/cms2/img/pokedex/full/249.png", "https://assets.pokemon.com/assets/cms2/img/pokedex/full/250.png", 
+      "https://assets.pokemon.com/assets/cms2/img/pokedex/full/197.png", "https://assets.pokemon.com/assets/cms2/img/pokedex/full/094.png", 
+      "https://assets.pokemon.com/assets/cms2/img/pokedex/full/133.png", "https://assets.pokemon.com/assets/cms2/img/pokedex/full/225.png"  
+    ];
+
+    const EXPENSE_CATEGORIES = [
+      { name: '早餐', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/175.png', color: 'bg-yellow-100 text-yellow-800' },
+      { name: '午餐', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/083.png', color: 'bg-orange-100 text-orange-800' },
+      { name: '晚餐', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/108.png', color: 'bg-red-100 text-red-800' },
+      { name: '飲品', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/007.png', color: 'bg-blue-100 text-blue-800' },
+      { name: '停車費', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/185.png', color: 'bg-gray-200 text-gray-800' },
+      { name: '卡費', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/054.png', color: 'bg-purple-100 text-purple-800' },
+      { name: '交通', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/131.png', color: 'bg-teal-100 text-teal-800' },
+      { name: '娛樂', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/039.png', color: 'bg-pink-100 text-pink-800' },
+      { name: '其他', icon: 'https://assets.pokemon.com/assets/cms2/img/pokedex/full/132.png', color: 'bg-slate-100 text-slate-800' }
+    ];
+
+    const POKE_IMAGES = {
+      pikachu: "https://assets.pokemon.com/assets/cms2/img/pokedex/full/025.png",
+      meowth: "https://assets.pokemon.com/assets/cms2/img/pokedex/full/052.png",
+      snorlax: "https://assets.pokemon.com/assets/cms2/img/pokedex/full/143.png",
+      lucario: "https://assets.pokemon.com/assets/cms2/img/pokedex/full/448.png",
+      charizard: "https://assets.pokemon.com/assets/cms2/img/pokedex/full/006.png",
+      slowpoke: "https://assets.pokemon.com/assets/cms2/img/pokedex/full/079.png",
+      pokeball: "https://upload.wikimedia.org/wikipedia/commons/5/53/Pok%C3%A9_Ball_icon.svg" 
+    };
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [needsConfig, setNeedsConfig] = useState(!isFirebaseInitialized);
+      const [configInput, setConfigInput] = useState('');
+      const [setupError, setSetupError] = useState('');
+      
+      const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
+      const [activeTab, setActiveTab] = useState('accounting'); 
+
+      const [calYear, setCalYear] = useState(new Date().getFullYear());
+      const [calMonth, setCalMonth] = useState(new Date().getMonth());
+
+      const [amount, setAmount] = useState('');
+      const [type, setType] = useState('午餐');
+      const [note, setNote] = useState('');
+      const [diaryText, setDiaryText] = useState('');
+      const [isSavingDiary, setIsSavingDiary] = useState(false);
+
+      const [allExpenses, setAllExpenses] = useState([]);
+      const [allDiaries, setAllDiaries] = useState([]);
+
+      const appId = window.__app_id || 'pokemon-log-app';
+
+      useEffect(() => {
+        if (!isFirebaseInitialized) return;
+        const initAuth = async () => {
+          try {
+            // 自動偵測預覽環境的 Token 並優先使用，避免 Network Request 錯誤
+            if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
+              await signInWithCustomToken(auth, window.__initial_auth_token);
+            } else if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+              await signInAnonymously(auth);
+            }
+          } catch (error) {
+            console.error("登入失敗:", error);
+          }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+      }, [needsConfig]);
+
+      useEffect(() => {
+        if (!user || !isFirebaseInitialized) return;
+        const expensesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'expenses');
+        const unsubExpenses = onSnapshot(expensesRef, (snapshot) => {
+          const expensesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setAllExpenses(expensesData);
+        }, (error) => console.error("讀取花費失敗:", error));
+
+        const diaryRef = collection(db, 'artifacts', appId, 'users', user.uid, 'diary');
+        const unsubDiary = onSnapshot(diaryRef, (snapshot) => {
+          const diaryData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setAllDiaries(diaryData);
+        }, (error) => console.error("讀取日記失敗:", error));
+
+        return () => { unsubExpenses(); unsubDiary(); };
+      }, [user]);
+
+      useEffect(() => {
+        const todayDiary = allDiaries.find(d => d.date === currentDate);
+        setDiaryText(todayDiary ? todayDiary.text : '');
+      }, [currentDate, allDiaries]);
+
+      useEffect(() => {
+        const d = new Date(currentDate);
+        setCalYear(d.getFullYear());
+        setCalMonth(d.getMonth());
+      }, [currentDate]);
+
+      const todaysExpenses = useMemo(() => {
+        return allExpenses.filter(e => e.date === currentDate).sort((a, b) => b.createdAt - a.createdAt);
+      }, [allExpenses, currentDate]);
+
+      const currentMonthStats = useMemo(() => {
+        const monthPrefix = currentDate.substring(0, 7);
+        const monthExpenses = allExpenses.filter(e => e.date.startsWith(monthPrefix));
+        const stats = {}; let total = 0;
+        monthExpenses.forEach(e => { stats[e.type] = (stats[e.type] || 0) + e.amount; total += e.amount; });
+        return { stats, total };
+      }, [allExpenses, currentDate]);
+
+      const handleSaveConfig = () => {
+        try {
+          const parsed = JSON.parse(configInput);
+          if (parsed.apiKey && parsed.projectId) {
+            localStorage.setItem('pokemon_firebase_config', JSON.stringify(parsed));
+            window.location.reload();
+          } else {
+            setSetupError('設定檔格式不正確，請確認包含 apiKey 與 projectId。');
+          }
+        } catch (e) {
+          setSetupError('請輸入有效的 JSON 格式！');
+        }
+      };
+
+      const handleAddExpense = async (e) => {
+        e.preventDefault();
+        if (!user || !amount || isNaN(amount)) return;
+        const newExpense = { date: currentDate, type, amount: parseFloat(amount), note, createdAt: Date.now() };
+        try {
+          const newDocRef = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'expenses'));
+          await setDoc(newDocRef, newExpense);
+          setAmount(''); setNote('');
+        } catch (error) { console.error("新增花費失敗:", error); }
+      };
+
+      const handleDeleteExpense = async (id) => {
+        if (!user) return;
+        try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'expenses', id)); } 
+        catch (error) { console.error("刪除花費失敗:", error); }
+      };
+
+      const handleSaveDiary = async () => {
+        if (!user) return;
+        setIsSavingDiary(true);
+        try {
+          const diaryDocRef = doc(db, 'artifacts', appId, 'users', user.uid, 'diary', currentDate);
+          await setDoc(diaryDocRef, { date: currentDate, text: diaryText, updatedAt: Date.now() });
+          setTimeout(() => setIsSavingDiary(false), 800);
+        } catch (error) { console.error("儲存日記失敗:", error); setIsSavingDiary(false); }
+      };
+
+      if (needsConfig) {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-yellow-100 via-orange-50 to-blue-100 flex items-center justify-center p-4 font-sans">
+            <div className="bg-white p-8 rounded-3xl shadow-xl max-w-lg w-full border-4 border-yellow-300">
+              <div className="text-center mb-6">
+                <h1 className="text-3xl font-bold text-gray-800 mb-2 flex items-center justify-center gap-2"><Cloud className="text-blue-500" /> 連結雲端背包</h1>
+                <p className="text-gray-600">看來你是第一次使用！請輸入你的 Firebase 設定檔 (JSON格式) 來啟用雲端儲存功能。</p>
+              </div>
+              <textarea className="w-full h-48 p-3 border-2 border-gray-200 rounded-xl focus:border-blue-400 focus:ring-0 resize-none font-mono text-sm" placeholder={'{\n  "apiKey": "...",\n  "authDomain": "...",\n  "projectId": "..."\n}'} value={configInput} onChange={(e) => setConfigInput(e.target.value)} />
+              {setupError && <p className="text-red-500 mt-2 text-sm">{setupError}</p>}
+              <button onClick={handleSaveConfig} className="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-xl transition-colors shadow-md">確認並啟動手帳</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (!user) {
+        return <div className="min-h-screen flex items-center justify-center bg-yellow-50 font-bold text-yellow-800 text-xl">載入冒險資料中...</div>;
+      }
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-yellow-50 via-orange-50 to-blue-50 p-4 md:p-8">
+          <div className="max-w-6xl mx-auto space-y-6">
+            <header className="bg-white/80 backdrop-blur-md rounded-3xl shadow-lg border-b-4 border-yellow-400 p-6 flex flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <img src={POKE_IMAGES.pikachu} alt="Pikachu" className="w-16 h-16 object-contain transform hover:scale-110 transition-transform drop-shadow-md" />
+                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-800 tracking-wide">冒險者的手帳</h1>
+              </div>
+              <div className="flex items-center">
+                <img src={POKE_IMAGES.pokeball} alt="Pokeball" className="w-10 h-10 object-contain opacity-80 animate-bounce" style={{ animationDuration: '2s' }} />
+              </div>
+            </header>
+
+            <div className="flex flex-col lg:flex-row gap-6">
+              <div className="w-full lg:w-80 flex-shrink-0 lg:sticky lg:top-8 h-fit">
+                <div className="bg-white/90 backdrop-blur-md rounded-3xl p-5 shadow-xl border-4 border-yellow-400 relative overflow-hidden">
+                  <img src={MONTHLY_POKEMON[calMonth]} className="absolute -bottom-6 -right-6 w-40 h-40 opacity-15 object-contain pointer-events-none transition-all duration-500" />
+                  
+                  <div className="flex justify-between items-center mb-6 relative z-10 bg-white/50 rounded-xl p-2">
+                    <button onClick={() => { let newM = calMonth - 1; let newY = calYear; if(newM < 0) { newM = 11; newY--; } setCalMonth(newM); setCalYear(newY); }} className="p-2 hover:bg-yellow-100 rounded-full transition-colors">
+                      <ChevronLeft className="w-6 h-6 text-gray-700" />
+                    </button>
+                    <h3 className="text-xl font-extrabold text-gray-800 flex items-center gap-2">
+                      <Calendar className="text-yellow-500 w-5 h-5" /> {calYear}年 {calMonth + 1}月
+                    </h3>
+                    <button onClick={() => { let newM = calMonth + 1; let newY = calYear; if(newM > 11) { newM = 0; newY++; } setCalMonth(newM); setCalYear(newY); }} className="p-2 hover:bg-yellow-100 rounded-full transition-colors">
+                      <ChevronRight className="w-6 h-6 text-gray-700" />
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-7 gap-1 md:gap-2 mb-2 relative z-10">
+                    {['日', '一', '二', '三', '四', '五', '六'].map((day, i) => (
+                      <div key={day} className={`text-center font-bold text-sm py-2 ${i === 0 || i === 6 ? (i===0 ? 'text-red-500' : 'text-green-600') : 'text-gray-500'}`}>{day}</div>
+                    ))}
+                    {Array.from({ length: new Date(calYear, calMonth, 1).getDay() }).map((_, i) => <div key={`empty-${i}`} className="p-2"></div>)}
+                    {Array.from({ length: new Date(calYear, calMonth + 1, 0).getDate() }).map((_, i) => {
+                      const day = i + 1;
+                      const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                      const isToday = dateStr === new Date().toISOString().split('T')[0];
+                      const isSelected = dateStr === currentDate;
+                      const holidayName = TAIWAN_HOLIDAYS_MAP[dateStr];
+                      const dayOfWeek = new Date(calYear, calMonth, day).getDay();
+                      const lunarLabel = LUNAR_FIRST.includes(dateStr) ? '初一' : (LUNAR_FIFTEENTH.includes(dateStr) ? '十五' : null);
+                      
+                      let textColor = (dayOfWeek === 0 || holidayName) ? 'text-red-500 font-bold' : (dayOfWeek === 6 ? 'text-green-600 font-bold' : 'text-gray-700');
+                      const hasExpense = allExpenses.some(e => e.date === dateStr);
+                      const hasDiary = allDiaries.some(d => d.date === dateStr);
+
+                      return (
+                        <button key={day} onClick={() => setCurrentDate(dateStr)} className={`relative p-1 md:py-2 rounded-xl flex flex-col items-center justify-start transition-all min-h-[64px] ${isSelected ? 'bg-yellow-400 text-yellow-900 shadow-lg transform scale-110 font-bold z-20 ring-2 ring-yellow-500' : 'hover:bg-yellow-50'} ${isToday && !isSelected ? 'border-2 border-yellow-400 bg-yellow-50/50' : ''}`}>
+                          <span className={isSelected ? 'text-yellow-900' : textColor}>{day}</span>
+                          <div className="flex-1 flex flex-col items-center justify-start mt-0.5 leading-none">
+                            {holidayName && <span className="text-[10px] md:text-xs text-red-500 font-bold whitespace-nowrap scale-90">{holidayName}</span>}
+                            {!holidayName && lunarLabel && <span className="text-[10px] text-gray-500 font-bold whitespace-nowrap scale-90">{lunarLabel}</span>}
+                          </div>
+                          <div className="flex gap-1 absolute bottom-1.5">
+                            {hasExpense && <div className="w-1.5 h-1.5 rounded-full bg-orange-500"></div>}
+                            {hasDiary && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 min-w-0 flex flex-col gap-6">
+                <div className="flex gap-2 md:gap-4 overflow-x-auto pb-2">
+                  <button onClick={() => setActiveTab('accounting')} className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-3 px-6 rounded-2xl font-bold text-lg transition-all shadow-sm ${activeTab === 'accounting' ? 'bg-yellow-400 text-yellow-900 border-2 border-yellow-500 shadow-md scale-105' : 'bg-white text-gray-500 hover:bg-yellow-50 border-2 border-transparent'}`}><Zap className="w-5 h-5" /> 記帳</button>
+                  <button onClick={() => setActiveTab('diary')} className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-3 px-6 rounded-2xl font-bold text-lg transition-all shadow-sm ${activeTab === 'diary' ? 'bg-blue-500 text-white border-2 border-blue-600 shadow-md scale-105' : 'bg-white text-gray-500 hover:bg-blue-50 border-2 border-transparent'}`}><Shield className="w-5 h-5" /> 日記</button>
+                  <button onClick={() => setActiveTab('stats')} className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-3 px-6 rounded-2xl font-bold text-lg transition-all shadow-sm ${activeTab === 'stats' ? 'bg-orange-500 text-white border-2 border-orange-600 shadow-md scale-105' : 'bg-white text-gray-500 hover:bg-orange-50 border-2 border-transparent'}`}><Flame className="w-5 h-5" /> 統計彙整</button>
+                </div>
+
+                <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-xl border border-gray-100 p-6 md:p-8 min-h-[500px]">
+                  
+                  {activeTab === 'accounting' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                      <div className="md:col-span-1 space-y-6">
+                        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3 border-b-2 border-yellow-200 pb-2"><img src={POKE_IMAGES.meowth} className="w-10 h-10 object-contain drop-shadow-md" /> 新增花費</h2>
+                        <form onSubmit={handleAddExpense} className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-600 mb-1">種類</label>
+                            <div className="grid grid-cols-3 gap-2">
+                              {EXPENSE_CATEGORIES.map(cat => (
+                                <button key={cat.name} type="button" onClick={() => setType(cat.name)} className={`p-2 rounded-xl text-sm flex flex-col items-center justify-center gap-1 transition-all ${type === cat.name ? 'ring-2 ring-yellow-400 bg-yellow-50 scale-105 shadow-sm font-bold' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                                  <img src={cat.icon} className="w-10 h-10 object-contain drop-shadow-sm mb-1" />
+                                  <span className="text-gray-700">{cat.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-600 mb-1">金額</label>
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
+                              <input type="number" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full pl-8 pr-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-yellow-400 focus:bg-white transition-colors text-lg font-bold" placeholder="0" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-600 mb-1">備註 (選填)</label>
+                            <input type="text" value={note} onChange={(e) => setNote(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-yellow-400 focus:bg-white transition-colors" placeholder="買了什麼好東西？" />
+                          </div>
+                          <button type="submit" className="w-full bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold py-3 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"><Save className="w-5 h-5" /> 記錄到背包</button>
+                        </form>
+                      </div>
+
+                      <div className="md:col-span-2 space-y-4">
+                        <div className="flex justify-between items-end border-b-2 border-gray-100 pb-2">
+                          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2"><BookOpen className="text-blue-500" /> 今日明細 ({currentDate})</h2>
+                          <div className="text-lg font-bold text-gray-600">總計: <span className="text-2xl text-red-500 ml-1">${todaysExpenses.reduce((sum, e) => sum + e.amount, 0)}</span></div>
+                        </div>
+                        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                          {todaysExpenses.length === 0 ? (
+                            <div className="text-center py-10 text-gray-500 flex flex-col items-center font-bold">
+                              <img src={POKE_IMAGES.snorlax} className="w-40 h-40 object-contain drop-shadow-xl mb-4 transform hover:scale-105 transition-transform" />
+                              卡比獸擋住了道路...今天還沒有任何花費紀錄喔！
+                            </div>
+                          ) : (
+                            todaysExpenses.map(expense => {
+                              const catInfo = EXPENSE_CATEGORIES.find(c => c.name === expense.type) || EXPENSE_CATEGORIES[8];
+                              return (
+                                <div key={expense.id} className="flex items-center justify-between p-4 bg-white border-2 border-gray-50 rounded-2xl shadow-sm hover:border-blue-200 transition-colors group">
+                                  <div className="flex items-center gap-4">
+                                    <div className={`w-14 h-14 rounded-full flex items-center justify-center ${catInfo.color}`}><img src={catInfo.icon} className="w-10 h-10 object-contain drop-shadow-sm" /></div>
+                                    <div>
+                                      <div className="font-bold text-gray-800 text-lg">{expense.type}</div>
+                                      {expense.note && <div className="text-sm text-gray-500">{expense.note}</div>}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-4">
+                                    <span className="font-extrabold text-xl text-gray-700">${expense.amount}</span>
+                                    <button onClick={() => handleDeleteExpense(expense.id)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"><Trash2 className="w-5 h-5" /></button>
+                                  </div>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'diary' && (
+                    <div className="h-full flex flex-col">
+                      <h2 className="text-xl font-bold text-blue-800 flex items-center gap-3 mb-4 border-b-2 border-blue-200 pb-2"><img src={POKE_IMAGES.lucario} className="w-12 h-12 object-contain drop-shadow-md" /> 冒險日誌 ({currentDate})</h2>
+                      <textarea value={diaryText} onChange={(e) => setDiaryText(e.target.value)} placeholder="跟路卡利歐分享今天遇到了什麼寶可夢？發生了什麼有趣的事呢？" className="flex-1 w-full min-h-[300px] p-6 bg-blue-50/50 border-2 border-blue-100 rounded-2xl focus:border-blue-400 focus:bg-white transition-colors text-lg leading-relaxed resize-none text-gray-700" />
+                      <div className="mt-4 flex justify-end">
+                        <button onClick={handleSaveDiary} disabled={isSavingDiary} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-2 disabled:opacity-70">
+                          {isSavingDiary ? '波導傳輸中...' : <><Save className="w-5 h-5" /> 儲存日誌</>}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'stats' && (
+                    <div>
+                      <div className="flex justify-between items-end border-b-2 border-orange-200 pb-2 mb-6">
+                        <h2 className="text-xl font-bold text-orange-800 flex items-center gap-3"><img src={POKE_IMAGES.charizard} className="w-14 h-14 object-contain drop-shadow-md" /> {currentDate.substring(0, 4)}年 {currentDate.substring(5, 7)}月 花費彙整</h2>
+                        <div className="text-lg font-bold text-gray-600">本月總計: <span className="text-3xl text-orange-600 ml-1">${currentMonthStats.total}</span></div>
+                      </div>
+                      {currentMonthStats.total === 0 ? (
+                        <div className="text-center py-20 text-gray-500 flex flex-col items-center font-bold">
+                          <img src={POKE_IMAGES.slowpoke} className="w-40 h-40 object-contain drop-shadow-xl mb-4 transform hover:scale-105 transition-transform" />
+                          呆呆獸發呆中...這個月還沒有冒險花費喔！
+                        </div>
+                      ) : (
+                        <div className="space-y-6">
+                          {Object.entries(currentMonthStats.stats).sort(([, a], [, b]) => b - a).map(([type, amount]) => {
+                            const catInfo = EXPENSE_CATEGORIES.find(c => c.name === type) || EXPENSE_CATEGORIES[8];
+                            const percentage = ((amount / currentMonthStats.total) * 100).toFixed(1);
+                            return (
+                              <div key={type} className="relative">
+                                <div className="flex justify-between text-sm font-bold text-gray-700 mb-2">
+                                  <span className="flex items-center gap-2"><img src={catInfo.icon} className="w-8 h-8 object-contain" /> {type}</span>
+                                  <span className="flex items-center">${amount} ({percentage}%)</span>
+                                </div>
+                                <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden">
+                                  <div className={`h-4 rounded-full ${catInfo.color.split(' ')[0]} bg-opacity-80`} style={{ width: `${percentage}%` }}></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
